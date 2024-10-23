@@ -1,0 +1,88 @@
+# Import necessary libraries
+import numpy as np
+import pandas as pd
+import yfinance as yf
+from sklearn.preprocessing import MinMaxScaler
+from keras.models import Sequential
+from keras.layers import Dense, LSTM
+import matplotlib.pyplot as plt
+from sklearn.metrics import mean_squared_error
+import math
+
+# Load the stock price data
+ticker = 'AAPL'  # You can replace this with any stock ticker
+df = yf.download(ticker, start="2015-01-01", end="2023-01-01")
+df = df[['Close']]  # Use only the 'Close' price for prediction
+df.head()
+
+# Plot the closing price history
+plt.figure(figsize=(16,8))
+plt.title(f'{ticker} Close Price History')
+plt.plot(df['Close'])
+plt.xlabel('Date', fontsize=18)
+plt.ylabel('Close Price USD ($)', fontsize=18)
+plt.show()
+
+# Preprocess the data
+scaler = MinMaxScaler(feature_range=(0,1))
+scaled_data = scaler.fit_transform(df['Close'].values.reshape(-1,1))
+
+# Split the data into training and test sets (80% train, 20% test)
+train_size = int(len(scaled_data) * 0.8)
+train_data = scaled_data[0:train_size]
+test_data = scaled_data[train_size:]
+
+# Create the training dataset
+def create_dataset(dataset, time_step=60):
+    X, y = [], []
+    for i in range(time_step, len(dataset)):
+        X.append(dataset[i-time_step:i, 0])
+        y.append(dataset[i, 0])
+    return np.array(X), np.array(y)
+
+time_step = 60
+X_train, y_train = create_dataset(train_data, time_step)
+X_test, y_test = create_dataset(test_data, time_step)
+
+# Reshape the data into [samples, time steps, features] format required for LSTM
+X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], 1)
+X_test = X_test.reshape(X_test.shape[0], X_test.shape[1], 1)
+
+# Build the LSTM model
+model = Sequential()
+model.add(LSTM(units=50, return_sequences=True, input_shape=(X_train.shape[1], 1)))
+model.add(LSTM(units=50, return_sequences=False))
+model.add(Dense(units=25))
+model.add(Dense(units=1))
+
+# Compile the model
+model.compile(optimizer='adam', loss='mean_squared_error')
+
+# Train the model
+model.fit(X_train, y_train, batch_size=64, epochs=10)
+
+# Test the model
+predictions = model.predict(X_test)
+predictions = scaler.inverse_transform(predictions)  # Inverse scaling
+
+# Calculate RMSE
+rmse = math.sqrt(mean_squared_error(y_test, scaler.inverse_transform(y_test.reshape(-1,1))))
+print(f'Root Mean Squared Error: {rmse}')
+
+# Visualize the data
+train = df[:train_size]
+valid = df[train_size + time_step:]  # Adjust valid to match the length of predictions
+
+valid['Predictions'] = predictions
+
+plt.figure(figsize=(16,8))
+plt.title(f'{ticker} LSTM Model')
+plt.xlabel('Date', fontsize=18)
+plt.ylabel('Close Price USD ($)', fontsize=18)
+plt.plot(train['Close'])
+plt.plot(valid[['Close', 'Predictions']])
+plt.legend(['Train', 'Actual', 'Predictions'], loc='lower right')
+plt.show()
+
+# Display the predicted and actual prices
+valid.tail()
